@@ -620,7 +620,19 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'getBlockReceipts',
 			call: 'eth_getBlockReceipts',
+			name: 'callBundle',
+			call: 'eth_callBundle',
 			params: 1,
+		}),
+		new web3._extend.Method({
+			name: 'estimateGasBundle',
+			call: 'eth_estimateGasBundle',
+			params: 1,
+		}),
+		new web3._extend.Method({
+			name: 'callBundle',
+			call: 'eth_callBundle',
+			params: 6
 		}),
 	],
 	properties: [
