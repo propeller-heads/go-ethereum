@@ -46,10 +46,15 @@ type Options struct {
 	ErrorRatio float64 // Allowed overestimation ratio for faster estimation termination
 }
 
+type EstimationResult struct {
+	MinLimit  uint64
+	Estimated uint64
+}
+
 // Estimate returns the lowest possible gas limit that allows the transaction to
 // run successfully with the provided context options. It returns an error if the
 // transaction would always revert, or if there are unexpected failures.
-func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uint64) (uint64, []byte, error) {
+func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uint64) (EstimationResult, []byte, error) {
 	// Binary search the gas limit, as it may need to be higher than the amount used
 	var (
 		lo uint64 // lowest-known gas limit where tx execution fails
@@ -76,7 +81,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 		available := balance
 		if call.Value != nil {
 			if call.Value.Cmp(available) >= 0 {
-				return 0, nil, core.ErrInsufficientFundsForTransfer
+				return EstimationResult{0, 0}, nil, core.ErrInsufficientFundsForTransfer
 			}
 			available.Sub(available, call.Value)
 		}
@@ -106,7 +111,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 		if call.To != nil && opts.State.GetCodeSize(*call.To) == 0 {
 			failed, _, err := execute(ctx, call, opts, params.TxGas)
 			if !failed && err == nil {
-				return params.TxGas, nil, nil
+				return EstimationResult{params.TxGas, params.TxGas}, nil, nil
 			}
 		}
 	}
@@ -114,13 +119,13 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	// can return error immediately.
 	failed, result, err := execute(ctx, call, opts, hi)
 	if err != nil {
-		return 0, nil, err
+		return EstimationResult{0, 0}, nil, err
 	}
 	if failed {
 		if result != nil && !errors.Is(result.Err, vm.ErrOutOfGas) {
-			return 0, result.Revert(), result.Err
+			return EstimationResult{0, 0}, result.Revert(), result.Err
 		}
-		return 0, nil, fmt.Errorf("gas required exceeds allowance (%d)", hi)
+		return EstimationResult{0, 0}, nil, fmt.Errorf("gas required exceeds allowance (%d)", hi)
 	}
 	// For almost any transaction, the gas consumed by the unconstrained execution
 	// above lower-bounds the gas limit required for it to succeed. One exception
@@ -139,7 +144,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 			// This should not happen under normal conditions since if we make it this far the
 			// transaction had run without error at least once before.
 			log.Error("Execution error in estimate gas", "err", err)
-			return 0, nil, err
+			return EstimationResult{0, 0}, nil, err
 		}
 		if failed {
 			lo = optimisticGasLimit
@@ -165,12 +170,12 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 			// range here is skewed to favor the low side.
 			mid = lo * 2
 		}
-		failed, _, err = execute(ctx, call, opts, mid)
+		failed, result, err = execute(ctx, call, opts, mid)
 		if err != nil {
 			// This should not happen under normal conditions since if we make it this far the
 			// transaction had run without error at least once before.
 			log.Error("Execution error in estimate gas", "err", err)
-			return 0, nil, err
+			return EstimationResult{0, 0}, nil, err
 		}
 		if failed {
 			lo = mid
@@ -178,7 +183,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 			hi = mid
 		}
 	}
-	return hi, nil, nil
+	return EstimationResult{hi, result.UsedGas - result.RefundedGas}, nil, nil
 }
 
 // execute is a helper that executes the transaction under a given gas limit and

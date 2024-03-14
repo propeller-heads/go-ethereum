@@ -1195,7 +1195,7 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 		}
 		return 0, err
 	}
-	return hexutil.Uint64(estimate), nil
+	return hexutil.Uint64(estimate.MinLimit), nil
 }
 
 // EstimateGas returns the lowest possible gas limit that allows the transaction to run
@@ -2440,6 +2440,23 @@ func (s *BundleAPI) EstimateGasBundle(ctx context.Context, args EstimateGasBundl
 			return nil, err
 		}
 
+		// Construct the gas estimator option from the user input
+		opts := &gasestimator.Options{
+			Config:     s.b.ChainConfig(),
+			Chain:      NewChainContext(ctx, s.b),
+			Header:     header,
+			State:      state,
+			ErrorRatio: estimateGasErrorRatio,
+		}
+
+		estimate, revert, err := gasestimator.Estimate(ctx, msg, opts, globalGasCap)
+		if err != nil {
+			if len(revert) > 0 {
+				return nil, newRevertError(revert)
+			}
+			return nil, err
+		}
+
 		// Prepare the hashes
 		txContext := core.NewEVMTxContext(msg)
 
@@ -2447,7 +2464,7 @@ func (s *BundleAPI) EstimateGasBundle(ctx context.Context, args EstimateGasBundl
 		vmenv := vm.NewEVM(blockContext, txContext, statedb, s.b.ChainConfig(), vm.Config{NoBaseFee: true})
 
 		// Apply state transition
-		result, err := core.ApplyMessage(vmenv, msg, gp)
+		_, err = core.ApplyMessage(vmenv, msg, gp)
 		if err != nil {
 			return nil, err
 		}
@@ -2458,7 +2475,8 @@ func (s *BundleAPI) EstimateGasBundle(ctx context.Context, args EstimateGasBundl
 
 		// Append result
 		jsonResult := map[string]interface{}{
-			"gasUsed": result.UsedGas,
+			"gasUsed": estimate.MinLimit,
+			"gasEstimate":  estimate.Estimated,
 		}
 		results = append(results, jsonResult)
 	}
